@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Asset Extractor</title>
+<style>
+:root{--bg:#0e1015;--panel:#161922;--line:#262b38;--text:#e8eaf0;--mute:#8a91a5;--accent:#8b7cff;--accent2:#6a5be0;--err:#ff6b7a;--ok:#5fd3a0;color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;min-height:100vh}
+main{max-width:760px;margin:0 auto;padding:48px 20px 64px}
+h1{font-size:34px;letter-spacing:-.02em;margin:0 0 6px}
+.sub{color:var(--mute);margin:0 0 28px}
+.bar{display:flex;gap:10px}
+input{flex:1;min-width:0;background:var(--panel);border:1px solid var(--line);border-radius:10px;color:var(--text);padding:14px 16px;font:inherit}
+input:focus,button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+button{background:var(--accent);color:#14102e;border:0;border-radius:10px;padding:0 22px;font:inherit;font-weight:600;cursor:pointer}
+button:hover{background:#a095ff}
+button:disabled{opacity:.5;cursor:wait}
+button.alt{background:transparent;color:var(--text);border:1px solid var(--line);padding:10px 16px}
+button.alt:hover{border-color:var(--accent);background:transparent}
+#msg{margin:16px 0 0;min-height:22px;color:var(--mute)}
+#msg.err{color:var(--err)}
+#msg.ok{color:var(--ok)}
+.card{display:none;margin-top:20px;background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+.card.show{display:block}
+.head{display:flex;gap:18px;padding:18px}
+.thumb{width:132px;height:132px;flex:none;border-radius:10px;background:#0b0d12 center/contain no-repeat;border:1px solid var(--line)}
+.head h2{margin:0 0 4px;font-size:20px;overflow-wrap:anywhere}
+.tag{display:inline-block;padding:2px 10px;border-radius:99px;background:#232842;color:#b9b1ff;font-size:13px;margin-bottom:8px}
+dl{display:grid;grid-template-columns:auto 1fr;gap:2px 14px;margin:0;font-size:14px}
+dt{color:var(--mute)}dd{margin:0;overflow-wrap:anywhere}
+.desc{padding:0 18px 14px;color:var(--mute);font-size:14px;white-space:pre-wrap;max-height:110px;overflow:auto}
+.act{border-top:1px solid var(--line);padding:16px 18px}
+.act h3{margin:0 0 10px;font-size:14px;color:var(--mute);font-weight:500}
+.btns{display:flex;flex-wrap:wrap;gap:8px}
+.btns button{padding:10px 18px}
+.prev{margin-top:14px}
+.prev img{max-width:100%;max-height:300px;border-radius:8px;background:repeating-conic-gradient(#1b1f2a 0 25%,#12151c 0 50%) 0 0/16px 16px}
+.prev audio{width:100%}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{padding:4px 10px;font-size:13px;border-radius:8px}
+.note{color:var(--mute);font-size:13px;margin-top:10px}
+@media(max-width:520px){.head{flex-direction:column}.thumb{width:100%;height:180px}.bar{flex-direction:column}button{padding:13px}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Asset Extractor</h1>
+  <p class="sub">Tempel ID atau link Marketplace Roblox, lalu unduh asetnya.</p>
+  <form class="bar" id="f">
+    <input id="q" placeholder="https://www.roblox.com/catalog/123456789  atau  123456789" autocomplete="off" spellcheck="false" autofocus>
+    <button id="go">Cek asset</button>
+  </form>
+  <div id="msg"></div>
+
+  <section class="card" id="card">
+    <div class="head">
+      <div class="thumb" id="thumb"></div>
+      <div>
+        <span class="tag" id="tag"></span>
+        <h2 id="name"></h2>
+        <dl id="meta"></dl>
+      </div>
+    </div>
+    <div class="desc" id="desc"></div>
+    <div class="act">
+      <h3 id="acth">Unduh</h3>
+      <div class="btns" id="btns"></div>
+      <div class="prev" id="prev"></div>
+      <div class="note" id="note"></div>
+    </div>
+    <div class="act" id="refsBox" style="display:none">
+      <h3>ID lain di dalam asset ini (klik untuk cek)</h3>
+      <div class="chips" id="refs"></div>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const TYPES = {1:['Image','image'],2:['T-Shirt','decal'],3:['Audio','audio'],4:['Mesh','mesh'],8:['Hat','model'],9:['Place','model','rbxl'],10:['Model','model'],11:['Shirt','decal'],12:['Pants','decal'],13:['Decal','decal'],17:['Head','model'],18:['Face','decal'],19:['Gear','model'],21:['Badge','none'],24:['Animation','anim'],32:['Package','model'],38:['Plugin','model'],40:['MeshPart','model'],61:['Emote Animation','anim']};
+const typeOf = t => TYPES[t] || ((t>=41&&t<=47)||(t>=64&&t<=72) ? ['Accessory','model'] : ['Tipe '+t,'model']);
+
+let cur = null;           // info asset aktif
+let urls = [];            // blob URL untuk dibersihkan
+
+function say(t, cls=''){ const m=$('msg'); m.textContent=t; m.className=cls; }
+function parseId(s){
+  s = s.trim();
+  if(/^\d+$/.test(s)) return s;
+  let m = s.match(/(?:catalog|library|asset|asset-details|marketplace)\/(\d+)/i) || s.match(/[?&]id=(\d+)/i) || s.match(/rbxassetid:\/\/(\d+)/i) || s.match(/(\d{5,})/);
+  return m ? m[1] : null;
+}
+function safeName(n){ return (n||'asset').replace(/[\\/:*?"<>|]+/g,'').trim().slice(0,60) || 'asset'; }
+function save(blob, filename){
+  const u = URL.createObjectURL(blob); urls.push(u);
+  const a = document.createElement('a'); a.href=u; a.download=filename; document.body.appendChild(a); a.click(); a.remove();
+}
+async function getBytes(id){
+  const r = await fetch('/api/asset?id='+id);
+  if(!r.ok){ let e; try{ e=(await r.json()).error }catch{} throw new Error(e || 'Gagal mengunduh (HTTP '+r.status+')'); }
+  return await r.arrayBuffer();
+}
+
+/* ---------- RBXM: ambil teks (LZ4 untuk chunk binary) untuk cari ID referensi ---------- */
+function lz4(src, outLen){
+  const out = new Uint8Array(outLen); let i=0,o=0;
+  while(i<src.length){
+    const t=src[i++]; let l=t>>4;
+    if(l===15){ let b; do{ b=src[i++]; l+=b; }while(b===255); }
+    for(let k=0;k<l;k++) out[o++]=src[i++];
+    if(i>=src.length) break;
+    const off=src[i++] | (src[i++]<<8); let m=t&15;
+    if(m===15){ let b; do{ b=src[i++]; m+=b; }while(b===255); }
+    m+=4; for(let k=0;k<m;k++){ out[o]=out[o-off]; o++; }
+  }
+  return out;
+}
+function rbxText(buf){
+  const u8=new Uint8Array(buf), dec=new TextDecoder('latin1');
+  if(dec.decode(u8.slice(0,8))!=='<roblox!') return dec.decode(u8);
+  const dv=new DataView(buf); let p=32, txt='';
+  while(p+16<=u8.length){
+    const name=dec.decode(u8.slice(p,p+4)), cl=dv.getUint32(p+4,true), ul=dv.getUint32(p+8,true); p+=16;
+    const n = cl||ul; const data=u8.slice(p,p+n); p+=n;
+    try{ txt += dec.decode(cl ? lz4(data,ul) : data) + '\n'; }catch{}
+    if(name.startsWith('END')) break;
+  }
+  return txt;
+}
+function findRefs(buf){
+  const txt=rbxText(buf), re=/(?:rbxassetid:\/\/|asset\/?\?id=|assetid=)(\d{5,})/gi, set=new Set(); let m;
+  while((m=re.exec(txt))) set.add(m[1]);
+  return [...set];
+}
+
+/* ---------- Gambar ---------- */
+async function toImage(buf, mime){
+  const bmp = await createImageBitmap(new Blob([buf]));
+  const c = document.createElement('canvas'); c.width=bmp.width; c.height=bmp.height;
+  const x = c.getContext('2d');
+  if(mime==='image/jpeg'){ x.fillStyle='#fff'; x.fillRect(0,0,c.width,c.height); }
+  x.drawImage(bmp,0,0);
+  return await new Promise(r => c.toBlob(r, mime, .95));
+}
+
+/* ---------- Mesh -> OBJ (v1, v2, v3, v4) ---------- */
+function meshToObj(buf){
+  const u8=new Uint8Array(buf), dv=new DataView(buf);
+  const head=new TextDecoder().decode(u8.slice(0,12));
+  if(!head.startsWith('version ')) throw new Error('Bukan file mesh Roblox');
+  const major=parseInt(head.slice(8)), V=[],N=[],T=[],F=[];
+  if(major===1){
+    const lines=new TextDecoder().decode(u8).split('\n'), sc = head.startsWith('version 1.00') ? .5 : 1;
+    const g=[...lines[2].matchAll(/\[([^\]]+)\]/g)].map(m=>m[1].split(',').map(Number));
+    for(let i=0;i+2<g.length;i+=3){ V.push(g[i].map(n=>n*sc)); N.push(g[i+1]); T.push([g[i+2][0],1-g[i+2][1]]); }
+    for(let i=0;i<V.length;i+=3) F.push([i,i+1,i+2]);
+  } else if(major>=2 && major<=4){
+    const p=13; let nV,nF,vs=40,hs=dv.getUint16(p,true),fs,bones=0,lodN=0;
+    if(major===2){ vs=dv.getUint8(p+2); nV=dv.getUint32(p+4,true); nF=dv.getUint32(p+8,true); }
+    else if(major===3){ vs=dv.getUint8(p+2); lodN=dv.getUint16(p+6,true); nV=dv.getUint32(p+8,true); nF=dv.getUint32(p+12,true); }
+    else { nV=dv.getUint32(p+4,true); nF=dv.getUint32(p+8,true); lodN=dv.getUint16(p+12,true); bones=dv.getUint16(p+14,true); }
+    let o=p+hs;
+    for(let i=0;i<nV;i++,o+=vs){
+      V.push([dv.getFloat32(o,true),dv.getFloat32(o+4,true),dv.getFloat32(o+8,true)]);
+      N.push([dv.getFloat32(o+12,true),dv.getFloat32(o+16,true),dv.getFloat32(o+20,true)]);
+      T.push([dv.getFloat32(o+24,true),1-dv.getFloat32(o+28,true)]);
+    }
+    if(major===4 && bones>0) o+=nV*8;
+    let a=0,b=nF;
+    if(major>=3 && lodN>=2){ const lo=o+nF*12; a=dv.getUint32(lo,true); b=dv.getUint32(lo+4,true); }
+    for(let i=a;i<b;i++){ const q=o+i*12; F.push([dv.getUint32(q,true),dv.getUint32(q+4,true),dv.getUint32(q+8,true)]); }
+  } else throw new Error('Versi mesh '+head.slice(8).trim()+' belum didukung untuk OBJ. Unduh file .mesh asli lalu buka dengan Blender (plugin Roblox) atau Studio.');
+  const out=['# Asset Extractor'];
+  V.forEach(v=>out.push('v '+v.join(' '))); T.forEach(t=>out.push('vt '+t.join(' '))); N.forEach(n=>out.push('vn '+n.join(' ')));
+  F.forEach(f=>{ const [a,b,c]=f.map(i=>i+1); out.push(`f ${a}/${a}/${a} ${b}/${b}/${b} ${c}/${c}/${c}`); });
+  return out.join('\n');
+}
+
+/* ---------- UI ---------- */
+function btn(label, fn, alt){
+  const b=document.createElement('button'); b.textContent=label; if(alt) b.className='alt';
+  b.onclick=async()=>{ b.disabled=true; say('Mengambil file…'); try{ await fn(); }catch(e){ say(e.message,'err'); } b.disabled=false; };
+  $('btns').appendChild(b); return b;
+}
+function showPrev(node){ $('prev').replaceChildren(node); }
+
+function buildActions(a){
+  const [tname, cat, ext] = typeOf(a.typeId), base = safeName(a.name);
+  $('btns').replaceChildren(); $('prev').replaceChildren(); $('note').textContent=''; $('refsBox').style.display='none';
+
+  if(cat==='image'){
+    const run = async mime => { const bl = await toImage(await getBytes(a.id), mime); const im=new Image(); im.src=URL.createObjectURL(bl); urls.push(im.src); showPrev(im); save(bl, base+(mime==='image/png'?'.png':'.jpg')); say('Selesai','ok'); };
+    btn('Unduh PNG', ()=>run('image/png')); btn('Unduh JPG', ()=>run('image/jpeg'), true);
+  }
+  else if(cat==='decal'){
+    const run = async mime => {
+      const ids = findRefs(await getBytes(a.id)).filter(i=>i!==String(a.id));
+      if(!ids.length) throw new Error('Image ID di dalam '+tname+' tidak ditemukan');
+      let bl, lastErr;
+      for(const i of ids){ try{ bl = await toImage(await getBytes(i), mime); break; }catch(e){ lastErr=e; } }
+      if(!bl) throw lastErr || new Error('Gambar tidak bisa diambil');
+      const im=new Image(); im.src=URL.createObjectURL(bl); urls.push(im.src); showPrev(im);
+      save(bl, base+(mime==='image/png'?'.png':'.jpg')); say('Selesai','ok');
+    };
+    btn('Unduh PNG', ()=>run('image/png')); btn('Unduh JPG', ()=>run('image/jpeg'), true);
+    $('note').textContent = tname+' hanyalah pembungkus; gambar aslinya diambil otomatis dari dalamnya.';
+  }
+  else if(cat==='audio'){
+    btn('Unduh MP3', async()=>{
+      const buf=await getBytes(a.id), u=new Uint8Array(buf);
+      const isOgg = u[0]===0x4F&&u[1]===0x67&&u[2]===0x67&&u[3]===0x53;
+      const isMp3 = (u[0]===0x49&&u[1]===0x44&&u[2]===0x33) || (u[0]===0xFF&&(u[1]&0xE0)===0xE0);
+      const e = isOgg?'ogg':isMp3?'mp3':'bin', bl=new Blob([buf],{type:isOgg?'audio/ogg':'audio/mpeg'});
+      const au=document.createElement('audio'); au.controls=true; au.src=URL.createObjectURL(bl); urls.push(au.src); showPrev(au);
+      save(bl, base+'.'+e);
+      if(isOgg) $('note').textContent='Audio ini aslinya format OGG, jadi diunduh sebagai .ogg tanpa konversi.';
+      say('Selesai','ok');
+    });
+  }
+  else if(cat==='mesh'){
+    btn('Unduh OBJ', async()=>{ const obj=meshToObj(await getBytes(a.id)); save(new Blob([obj],{type:'text/plain'}), base+'.obj'); say('Selesai','ok'); });
+    btn('Unduh .mesh asli', async()=>{ save(new Blob([await getBytes(a.id)]), base+'.mesh'); say('Selesai','ok'); }, true);
+    $('note').textContent='FBX belum tersedia. Impor OBJ ke Blender lalu export FBX jika perlu.';
+  }
+  else if(cat==='anim'){
+    btn('Unduh RBXM', async()=>{ save(new Blob([await getBytes(a.id)]), base+'.rbxm'); say('Selesai','ok'); });
+    $('note').textContent='Animasi hanya bisa diunduh jika dibuat publik atau kamu punya izin aksesnya.';
+  }
+  else if(cat==='none'){ $('acth').textContent='Tidak ada file untuk diunduh'; }
+  else {
+    const e=ext||'rbxm';
+    btn('Unduh '+e.toUpperCase(), async()=>{ save(new Blob([await getBytes(a.id)]), base+'.'+e); say('Selesai','ok'); });
+    btn('Cari ID di dalamnya', async()=>{
+      const ids=findRefs(await getBytes(a.id)).filter(i=>i!==String(a.id)).slice(0,40);
+      $('refsBox').style.display = ids.length ? '' : 'none'; $('refs').replaceChildren();
+      ids.forEach(i=>{ const c=document.createElement('button'); c.className='alt chip'; c.textContent=i; c.onclick=()=>{ $('q').value=i; $('f').requestSubmit(); }; $('refs').appendChild(c); });
+      say(ids.length ? ids.length+' ID ditemukan (mesh, tekstur, audio, dll)' : 'Tidak ada ID referensi ditemukan', ids.length?'ok':'');
+    }, true);
+    $('note').textContent='Model hanya bisa diunduh jika asetnya publik. Untuk mesh di dalam model, cari ID-nya lalu cek satu per satu.';
+  }
+}
+
+function render(a){
+  cur=a; const [tname]=typeOf(a.typeId);
+  $('tag').textContent=tname; $('name').textContent=a.name; $('acth').textContent='Unduh';
+  $('thumb').style.backgroundImage = a.thumb ? `url("${a.thumb}")` : 'none';
+  const rows=[['Asset ID',a.id],['Pembuat',a.creator?a.creator.name+' ('+a.creator.type+')':'-'],['Dibuat',new Date(a.created).toLocaleDateString('id-ID')],['Diperbarui',new Date(a.updated).toLocaleDateString('id-ID')],['Harga',a.price==null?(a.forSale?'-':'Tidak dijual'):a.price+' Robux']];
+  $('meta').replaceChildren(); rows.forEach(([k,v])=>{ const dt=document.createElement('dt'),dd=document.createElement('dd'); dt.textContent=k; dd.textContent=v; $('meta').append(dt,dd); });
+  $('desc').textContent=a.description||''; $('desc').style.display=a.description?'':'none';
+  buildActions(a); $('card').classList.add('show');
+}
+
+$('f').addEventListener('submit', async e=>{
+  e.preventDefault();
+  const id=parseId($('q').value);
+  if(!id){ say('Tidak menemukan ID. Tempel link Marketplace atau angka ID-nya.','err'); return; }
+  urls.forEach(URL.revokeObjectURL); urls=[];
+  $('go').disabled=true; say('Mengambil info…'); $('card').classList.remove('show');
+  try{
+    const r=await fetch('/api/info?id='+id), j=await r.json();
+    if(!r.ok) throw new Error(j.error||'Gagal mengambil info');
+    render(j); say('');
+    history.replaceState(null,'','?id='+id);
+  }catch(err){ say(err.message,'err'); }
+  $('go').disabled=false;
+});
+
+const pre=new URLSearchParams(location.search).get('id');
+if(pre){ $('q').value=pre; $('f').requestSubmit(); }
+</script>
+</body>
+</html>
